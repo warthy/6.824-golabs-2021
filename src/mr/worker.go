@@ -1,10 +1,15 @@
 package mr
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"time"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
-
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,41 +29,54 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 
-//
-// main/mrworker.go calls this function.
-//
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
+	for {
+		task := CallRequestTask()
+		switch task.rtype {
+		case IDLE:
+			time.Sleep(task.idleTime)
+		case COMPLETE:
+			fmt.Printf("job complete, no task left. pid %d is over", os.Getpid())
+			return
+		case MAP:
+			{
+				file, err := os.Open(task.filename)
+				if err != nil {
+					log.Fatalf("cannot open %v", task.filename)
+				}
+				content, err := ioutil.ReadAll(file)
+				if err != nil {
+					log.Fatalf("cannot read %v", task.filename)
+				}
+				file.Close()
 
-	// Your worker implementation here.
+				kva := mapf(task.filename, string(content))
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+				intermediateFile, _ := os.Create(fmt.Sprintf("mr-%d-%d", task.key, ihash(task.filename)))
+				enc := json.NewEncoder(intermediateFile)
+				for _, kv := range kva {
+					err := enc.Encode(&kv)
+					if err != nil {
+						log.Fatal("failed parsing KeyValue into JSON")
+					}
+				}
+			}
+		case REDUCE:
+			{
+
+			}
+		}
+	}
 
 }
 
-//
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
+func CallRequestTask() RequestTaskReply {
+	args := RequestTask{}
+	reply := RequestTaskReply{}
 
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	call("Coordinator.Example", &args, &reply)
-
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
+	call("Coordinator.RequestTask", &args, &reply)
+	return reply
 }
 
 //
